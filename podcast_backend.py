@@ -75,124 +75,119 @@ def get_transcribe_podcast(rss_url, local_path):
   output['episode_transcript'] = result['text']
   return output
 
-@stub.function(image=corise_image, secret=modal.Secret.from_name("dd-openai-secret"))
+@stub.function(image=corise_image, secret=modal.Secret.from_name("my-openai-secret"))
 def get_podcast_summary(podcast_transcript):
   import openai
-  import tiktoken
-  # Tokenize encoding
-  enc = tiktoken.encoding_for_model("gpt-4")
-  token_count = len(enc.encode(podcast_transcript))
-  print ("Number of tokens in input prompt in gpt-4", token_count)
 
   instructPrompt = """
-    I am providing you with a transcription of a podcast.
-    Write an entertaining summary of the podcast in the tone of Joe Rogan.
+  You are an expert copywriter who is in charge of publishing newsletters that
+  summarize podcasts to thousands of subscribers. Please provide a comprehensive
+  summary of this podcast. The summary should
+  cover all the key points and main ideas presented in the original text, while
+  also condensing the information into a concise and easy-to-understand format.
+  Please ensure that the summary includes relevant details and examples that
+  support the main ideas, while avoiding any unnecessary information or
+  repetition. The length of the summary should be appropriate for the length and
+  complexity of the original text, providing a clear and accurate overview
+  without omitting any important information.
   """
 
-  # Assuming podcast_transcript variable is already defined:
   request = instructPrompt + podcast_transcript
 
   chatOutput = openai.ChatCompletion.create(model="gpt-4",
-                                              messages=[{"role": "system", "content": "You are a helpful assistant."},
-                                                        {"role": "user", "content": request}
-                                                        ]
-                                              )
+                                            messages=[{"role": "system", "content": "You are a helpful assistant."},
+                                                      {"role": "user", "content": request}
+                                                      ]
+                                            )
 
   podcastSummary = chatOutput.choices[0].message.content
-
-  print("Podcast Summary", podcastSummary)
   return podcastSummary
 
-@stub.function(image=corise_image, secret=modal.Secret.from_name("dd-openai-secret"))
+@stub.function(image=corise_image, secret=modal.Secret.from_name("my-openai-secret"))
 def get_podcast_guest(podcast_transcript):
   import openai
   import wikipedia
   import json
-  request = podcast_transcript[:5500]
+
+  request = podcast_transcript[:8000]
+  completion = openai.ChatCompletion.create(
+    model="gpt-3.5-turbo",
+    messages=[{"role": "user", "content": request}],
+    functions=[
+    {
+        "name": "get_podcast_guest_information",
+        "description": "Get information on the podcast guest using their name to search on Wikipedia",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "guest_name": {
+                    "type": "string",
+                    "description": "The name of the guest who is speaking on the podcast",
+                },
+                "unit": {"type": "string"},
+            },
+            "required": ["guest_name"],
+        },
+    }
+    ],
+    function_call={"name": "get_podcast_guest_information"}
+    )
+
+  podcast_guest = ""
+  response_message = completion["choices"][0]["message"]
+  if response_message.get("function_call"):
+    function_name = response_message["function_call"]["name"]
+    function_args = json.loads(response_message["function_call"]["arguments"])
+    podcast_guest=function_args.get("guest_name")
 
   try:
-    completion = openai.ChatCompletion.create(
-      model="gpt-4",
-      messages=[{"role": "user", "content": request}],
-      functions=[
-        {
-          "name": "get_podcast_guest_information",
-          "description": "Get information on the podcast guest using their full name and the name of the organization they are part of to search for them on Wikipedia or Google",
-          "parameters": {
-              "type": "object",
-              "properties": {
-                  "guest_name": {
-                      "type": "string",
-                      "description": "The full name of the guest who is speaking in the podcast",
-                  },
-                  "guest_organization": {
-                      "type": "string",
-                      "description": "The full name of the organization that the podcast guest belongs to or runs",
-                  },
-                  "guest_title": {
-                      "type": "string",
-                      "description": "The title, designation or role of the podcast guest in their organization",
-                  },
-              },
-              "required": ["guest_name"],
-          },
-        }
-      ],
-  function_call={"name": "get_podcast_guest_information"}
-  )
+    input = wikipedia.page(podcast_guest, auto_suggest=False)
+    podcast_guest_info = input.summary
+  except wikipedia.exceptions.PageError:
+    podcast_guest_info = "Not Available"
+  except wikipedia.exceptions.DisambiguationError as e:
+    podcast_guest_info = "Not Available"
 
-  except Exception as e:
-    return f"Error fetching characters from model: {str(e)}"
-
-  response_message = completion["choices"][0]["message"]
-  podcastGuest = []
-
-  if response_message.get("function_call"):
-    function_args = json.loads(response_message["function_call"]["arguments"])
-    characters = function_args.get("characters", [])
-
-    for character in characters:
-      character_name = character.get("character_name", "")
-      podcastGuest.append(character)
+  podcastGuest = {}
+  podcastGuest['name'] = podcast_guest
+  podcastGuest['summary'] = podcast_guest_info
 
   return podcastGuest
 
-@stub.function(image=corise_image, secret=modal.Secret.from_name("dd-openai-secret"))
+@stub.function(image=corise_image, secret=modal.Secret.from_name("my-openai-secret"))
 def get_podcast_highlights(podcast_transcript):
   import openai
-  
-  instructPrompt = """
-    I am providing you with a transcription of a podcast. 
-    Provide highlights of the podcast episode.
 
-    * The host, [host name], interviewed [guest name], an expert on [guest's expertise].
-    * [guest name] shared some fascinating insights on [topic of discussion].
-    * Some of the key takeaways from the episode include:
-      * [Key takeaway 1]
-      * [Key takeaway 2]
-      * [Key takeaway 3]
+  instructPrompt = """
+  You are a podcast editor and producer. You are provided with a transcript of a podcast episode and have to identify the five most significant moments in the podcast as highlights.
+  Use these guidelines to help you select each highlight:
+
+  - Each highlight needs to be a statement by one of the podcast guest.
+  - Each highlight has to be impactful and an important take away from this podcast episode.
+  - Each highlight must be concise and make listeners want to hear more about why the podcast guest said that.
+  - The highlights that you pick must be spread out throughout the episode.
+
+  Provide only the highlights and nothing else. Provide the full sentence of the highlight and format it as follows:
+  - <Highlight 1>
+  - <Highlight 2>
+  - <Highlight 3>
+  - <Highlight 4>
+  - <Highlight 5>
   """
 
   request = instructPrompt + podcast_transcript
 
-  try:
-    # Make the API call to get highlights
-    chatOutput = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": request}
-            ]
-        )
+  chatOutput = openai.ChatCompletion.create(model="gpt-4",
+                                            messages=[{"role": "system", "content": "You are a helpful assistant."},
+                                                      {"role": "user", "content": request}
+                                                      ]
+                                            )
 
-    podcastHighlights = chatOutput.choices[0].message.content
-
-  except Exception as e:
-        return f"An error occurred while fetching podcast highlights: {str(e)}"
+  podcastHighlights = chatOutput.choices[0].message.content
 
   return podcastHighlights
 
-@stub.function(image=corise_image, secret=modal.Secret.from_name("dd-openai-secret"), timeout=1200)
+@stub.function(image=corise_image, secret=modal.Secret.from_name("my-openai-secret"), timeout=1200)
 def process_podcast(url, path):
   output = {}
   podcast_details = get_transcribe_podcast.call(url, path)
