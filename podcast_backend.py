@@ -1,3 +1,4 @@
+%%writefile /content/podcast/podcast_backend.py
 import modal
 
 def download_whisper():
@@ -78,8 +79,29 @@ def get_transcribe_podcast(rss_url, local_path):
 @stub.function(image=corise_image, secret=modal.Secret.from_name("dd-openai-secret"))
 def get_podcast_summary(podcast_transcript):
   import openai
-  response = openai.Completion.create(engine="gpt-3.5-turbo-16k-0613", prompt=f"Summarize the following podcast transcript: {podcast_transcript}", max_tokens=150)
-  podcastSummary = response.choices[0].text.strip()
+  import tiktoken
+  # Tokenize encoding
+  enc = tiktoken.encoding_for_model("gpt-4")
+  token_count = len(enc.encode(podcast_transcript))
+  print ("Number of tokens in input prompt in  gpt-4", token_count)
+
+  instructPrompt = """
+    I am providing you with a transcription of a podcast.
+    Write an entertaining summary of the podcast in the tone of Joe Rogan.
+  """
+
+  # Assuming podcast_transcript variable is already defined:
+  request = instructPrompt + podcast_transcript
+
+  chatOutput = openai.ChatCompletion.create(model="gpt-4",
+                                              messages=[{"role": "system", "content": "You are a helpful assistant."},
+                                                        {"role": "user", "content": request}
+                                                        ]
+                                              )
+
+  podcastSummary = chatOutput.choices[0].message.content
+
+  print("Podcast Summary", podcastSummary)
   return podcastSummary
 
 @stub.function(image=corise_image, secret=modal.Secret.from_name("dd-openai-secret"))
@@ -87,17 +109,88 @@ def get_podcast_guest(podcast_transcript):
   import openai
   import wikipedia
   import json
-  prompt = f"Identify the guest or guests from the following podcast transcript: {podcast_transcript}"
-  response = openai.Completion.create(engine="gpt-3.5-turbo-16k-0613", prompt=prompt, max_tokens=50)
-  podcastGuest = response.choices[0].text.strip()
+  request = podcast_transcript[:5500]
+
+  try:
+    completion = openai.ChatCompletion.create(
+      model="gpt-4",
+      messages=[{"role": "user", "content": request}],
+      functions=[
+        {
+          "name": "get_podcast_guest_information",
+          "description": "Get information on the podcast guest using their full name and the name of the organization they are part of to search for them on Wikipedia or Google",
+          "parameters": {
+              "type": "object",
+              "properties": {
+                  "guest_name": {
+                      "type": "string",
+                      "description": "The full name of the guest who is speaking in the podcast",
+                  },
+                  "guest_organization": {
+                      "type": "string",
+                      "description": "The full name of the organization that the podcast guest belongs to or runs",
+                  },
+                  "guest_title": {
+                      "type": "string",
+                      "description": "The title, designation or role of the podcast guest in their organization",
+                  },
+              },
+              "required": ["guest_name"],
+          },
+        }
+      ],
+  function_call={"name": "get_podcast_guest_information"}
+  )
+
+  except Exception as e:
+    return f"Error fetching characters from model: {str(e)}"
+
+  response_message = completion["choices"][0]["message"]
+  podcastGuest = []
+
+  if response_message.get("function_call"):
+    function_args = json.loads(response_message["function_call"]["arguments"])
+    characters = function_args.get("characters", [])
+
+    for character in characters:
+      character_name = character.get("character_name", "")
+      podcastGuest.append(character)
+
   return podcastGuest
 
 @stub.function(image=corise_image, secret=modal.Secret.from_name("dd-openai-secret"))
 def get_podcast_highlights(podcast_transcript):
   import openai
-  prompt = f"List the key highlights or moments from the following podcast transcript: {podcast_transcript}"
-  response = openai.Completion.create(engine="gpt-3.5-turbo-16k-0613", prompt=prompt, max_tokens=150)
-  podcastHighlights = response.choices[0].text.strip().split('\n')
+  
+  instructPrompt = """
+    I am providing you with a transcription of a podcast. 
+    Provide highlights of the podcast episode.
+
+    * The host, [host name], interviewed [guest name], an expert on [guest's expertise].
+    * [guest name] shared some fascinating insights on [topic of discussion].
+    * Some of the key takeaways from the episode include:
+      * [Key takeaway 1]
+      * [Key takeaway 2]
+      * [Key takeaway 3]
+  """
+
+  request = instructPrompt + podcast_transcript
+
+  try:
+    # Make the API call to get highlights
+    chatOutput = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": request}
+            ]
+        )
+
+    podcastHighlights = chatOutput.choices[0].message.content
+
+  except Exception as e:
+        return f"An error occurred while fetching podcast highlights: {str(e)}"
+
   return podcastHighlights
 
 @stub.function(image=corise_image, secret=modal.Secret.from_name("dd-openai-secret"), timeout=1200)
