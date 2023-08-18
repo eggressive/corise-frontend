@@ -1,0 +1,6 @@
+# Ignore files ending in :Zone.Identifier
+*Zone.Identifier
+
+# Default gitignore rules
+.venv/
+.vscode/
