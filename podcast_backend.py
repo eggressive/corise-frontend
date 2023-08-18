@@ -1,4 +1,3 @@
-%%writefile /content/podcast/podcast_backend.py
 import modal
 
 def download_whisper():
@@ -83,7 +82,7 @@ def get_podcast_summary(podcast_transcript):
   # Tokenize encoding
   enc = tiktoken.encoding_for_model("gpt-4")
   token_count = len(enc.encode(podcast_transcript))
-  print ("Number of tokens in input prompt in  gpt-4", token_count)
+  print ("Number of tokens in input prompt in gpt-4", token_count)
 
   instructPrompt = """
     I am providing you with a transcription of a podcast.

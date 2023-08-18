@@ -1,117 +1,126 @@
+import streamlit as st
 import modal
+import json
+import os
 
-def download_whisper():
-  # Load the Whisper model
-  import os
-  import whisper
-  print ("Download the Whisper model")
+def main():
+    st.title("Newsletter Dashboard")
 
-  # Perform download only once and save to Container storage
-  whisper._download(whisper._MODELS["medium"], '/content/podcast/', False)
+    available_podcast_info = create_dict_from_json_files('.')
 
+    # Left section - Input fields
+    st.sidebar.header("Podcast RSS Feeds")
 
-stub = modal.Stub("corise-podcast-project")
-corise_image = modal.Image.debian_slim().pip_install("feedparser",
-                                                     "https://github.com/openai/whisper/archive/9f70a352f9f8630ab3aa0d06af5cb9532bd8c21d.tar.gz",
-                                                     "requests",
-                                                     "ffmpeg",
-                                                     "openai",
-                                                     "tiktoken",
-                                                     "wikipedia",
-                                                     "ffmpeg-python").apt_install("ffmpeg").run_function(download_whisper)
+    # Dropdown box
+    st.sidebar.subheader("Available Podcasts Feeds")
+    selected_podcast = st.sidebar.selectbox("Select Podcast", options=available_podcast_info.keys())
 
-@stub.function(image=corise_image, gpu="any", timeout=600)
-def get_transcribe_podcast(rss_url, local_path):
-  print ("Starting Podcast Transcription Function")
-  print ("Feed URL: ", rss_url)
-  print ("Local Path:", local_path)
+    if selected_podcast:
 
-  # Read from the RSS Feed URL
-  import feedparser
-  intelligence_feed = feedparser.parse(rss_url)
-  podcast_title = intelligence_feed['feed']['title']
-  episode_title = intelligence_feed.entries[0]['title']
-  episode_image = intelligence_feed['feed']['image'].href
-  for item in intelligence_feed.entries[0].links:
-    if (item['type'] == 'audio/mpeg'):
-      episode_url = item.href
-  episode_name = "podcast_episode.mp3"
-  print ("RSS URL read and episode URL: ", episode_url)
+        podcast_info = available_podcast_info[selected_podcast]
 
-  # Download the podcast episode by parsing the RSS feed
-  from pathlib import Path
-  p = Path(local_path)
-  p.mkdir(exist_ok=True)
+        # Right section - Newsletter content
+        st.header("Newsletter Content")
 
-  print ("Downloading the podcast episode")
-  import requests
-  with requests.get(episode_url, stream=True) as r:
-    r.raise_for_status()
-    episode_path = p.joinpath(episode_name)
-    with open(episode_path, 'wb') as f:
-      for chunk in r.iter_content(chunk_size=8192):
-        f.write(chunk)
+        # Display the podcast title
+        st.subheader("Episode Title")
+        st.write(podcast_info['podcast_details']['episode_title'])
 
-  print ("Podcast Episode downloaded")
+        # Display the podcast summary and the cover image in a side-by-side layout
+        col1, col2 = st.columns([7, 3])
 
-  # Load the Whisper model
-  import os
-  import whisper
+        with col1:
+            # Display the podcast episode summary
+            st.subheader("Podcast Episode Summary")
+            st.write(podcast_info['podcast_summary'])
 
-  # Load model from saved location
-  print ("Load the Whisper model")
-  model = whisper.load_model('medium', device='cuda', download_root='/content/podcast/')
+        with col2:
+            st.image(podcast_info['podcast_details']['episode_image'], caption="Podcast Cover", width=300, use_column_width=True)
 
-  # Perform the transcription
-  print ("Starting podcast transcription")
-  result = model.transcribe(local_path + episode_name)
+        # Display the podcast guest and their details in a side-by-side layout
+        col3, col4 = st.columns([3, 7])
 
-  # Return the transcribed text
-  print ("Podcast transcription completed, returning results...")
-  output = {}
-  output['podcast_title'] = podcast_title
-  output['episode_title'] = episode_title
-  output['episode_image'] = episode_image
-  output['episode_transcript'] = result['text']
-  return output
+        with col3:
+            st.subheader("Podcast Guest")
+            st.write(podcast_info['podcast_guest'])
 
-@stub.function(image=corise_image, secret=modal.Secret.from_name("my-openai-secret"))
-def get_podcast_summary(podcast_transcript):
-  import openai
-  ## ADD YOUR LOGIC HERE TO RETURN THE SUMMARY OF THE PODCAST USING OPENAI
-  return podcastSummary
+        with col4:
+            st.subheader("Podcast Guest Details")
+            st.write(podcast_info["podcast_guest"]['summary'])
 
-@stub.function(image=corise_image, secret=modal.Secret.from_name("my-openai-secret"))
-def get_podcast_guest(podcast_transcript):
-  import openai
-  import wikipedia
-  import json
-  ## ADD YOUR LOGIC HERE TO RETURN THE PODCAST GUEST INFORMATION
-  return podcastGuest
+        # Display the five key moments
+        st.subheader("Key Moments")
+        key_moments = podcast_info['podcast_highlights']
+        for moment in key_moments.split('\n'):
+            st.markdown(
+                f"<p style='margin-bottom: 5px;'>{moment}</p>", unsafe_allow_html=True)
 
-@stub.function(image=corise_image, secret=modal.Secret.from_name("my-openai-secret"))
-def get_podcast_highlights(podcast_transcript):
-  import openai
-  ### ADD YOUR LOGIC HERE TO RETURN THE HIGHLIGHTS OF THE PODCAST
-  return podcastHighlights
+    # User Input box
+    st.sidebar.subheader("Add and Process New Podcast Feed")
+    url = st.sidebar.text_input("Link to RSS Feed")
 
-@stub.function(image=corise_image, secret=modal.Secret.from_name("my-openai-secret"), timeout=1200)
-def process_podcast(url, path):
-  output = {}
-  podcast_details = get_transcribe_podcast.call(url, path)
-  podcast_summary = get_podcast_summary.call(podcast_details['episode_transcript'])
-  podcast_guest = get_podcast_guest.call(podcast_details['episode_transcript'])
-  podcast_highlights = get_podcast_highlights.call(podcast_details['episode_transcript'])
-  output['podcast_details'] = podcast_details
-  output['podcast_summary'] = podcast_summary
-  output['podcast_guest'] = podcast_guest
-  output['podcast_highlights'] = podcast_highlights
-  return output
+    process_button = st.sidebar.button("Process Podcast Feed")
+    st.sidebar.markdown("**Note**: Podcast processing can take upto 5 mins, please be patient.")
 
-@stub.local_entrypoint()
-def test_method(url, path):
-  output = {}
-  podcast_details = get_transcribe_podcast.call(url, path)
-  print ("Podcast Summary: ", get_podcast_summary.call(podcast_details['episode_transcript']))
-  print ("Podcast Guest Information: ", get_podcast_guest.call(podcast_details['episode_transcript']))
-  print ("Podcast Highlights: ", get_podcast_highlights.call(podcast_details['episode_transcript']))
+    if process_button:
+
+        # Call the function to process the URLs and retrieve podcast guest information
+        podcast_info = process_podcast_info(url)
+
+        # Right section - Newsletter content
+        st.header("Newsletter Content")
+
+        # Display the podcast title
+        st.subheader("Episode Title")
+        st.write(podcast_info['podcast_details']['episode_title'])
+
+        # Display the podcast summary and the cover image in a side-by-side layout
+        col1, col2 = st.columns([7, 3])
+
+        with col1:
+            # Display the podcast episode summary
+            st.subheader("Podcast Episode Summary")
+            st.write(podcast_info['podcast_summary'])
+
+        with col2:
+            st.image(podcast_info['podcast_details']['episode_image'], caption="Podcast Cover", width=300, use_column_width=True)
+
+        # Display the podcast guest and their details in a side-by-side layout
+        col3, col4 = st.columns([3, 7])
+
+        with col3:
+            st.subheader("Podcast Guest")
+            st.write(podcast_info['podcast_guest'])
+
+        with col4:
+            st.subheader("Podcast Guest Details")
+            st.write(podcast_info["podcast_guest"]['summary'])
+
+        # Display the five key moments
+        st.subheader("Key Moments")
+        key_moments = podcast_info['podcast_highlights']
+        for moment in key_moments.split('\n'):
+            st.markdown(
+                f"<p style='margin-bottom: 5px;'>{moment}</p>", unsafe_allow_html=True)
+
+def create_dict_from_json_files(folder_path):
+    json_files = [f for f in os.listdir(folder_path) if f.endswith('.json')]
+    data_dict = {}
+
+    for file_name in json_files:
+        file_path = os.path.join(folder_path, file_name)
+        with open(file_path, 'r') as file:
+            podcast_info = json.load(file)
+            podcast_name = podcast_info['podcast_details']['podcast_title']
+            # Process the file data as needed
+            data_dict[podcast_name] = podcast_info
+
+    return data_dict
+
+def process_podcast_info(url):
+    f = modal.Function.lookup("corise-podcast-project", "process_podcast")
+    output = f.call(url, '/content/podcast/')
+    return output
+
+if __name__ == '__main__':
+    main()
